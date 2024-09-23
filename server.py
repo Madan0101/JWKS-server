@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption, PublicFormat
@@ -8,19 +8,20 @@ import time
 
 app = Flask(__name__)
 
-#storE keys
+# Store keys
 keys = []
 
 def generate_key():
-    """Generates an RSA key pair and stores it with an expiration and kid, and serialize for signing"""
+    """Generates an RSA key pair, assigns a unique kid and expiration, and stores it."""
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048,
     )
     public_key = private_key.public_key()
-    exp_time = time.time() + 5  # Key expire in (5 seconds)
-    kid = str(len(keys) + 1)
+    exp_time = time.time() + 300      # Key expiring in 5 min
+    kid = str(len(keys) + 1)          #unique key ID (kid)
     
+    #private and public keys
     private_pem = private_key.private_bytes(
         encoding=Encoding.PEM,
         format=PrivateFormat.PKCS8,
@@ -31,18 +32,26 @@ def generate_key():
         format=PublicFormat.SubjectPublicKeyInfo
     )
     
+    # Appending the key info - keys list
     keys.append({
         "kid": kid,
         "private_key": private_pem,
         "public_key": public_pem,
         "exp": exp_time
     })
+    
+    print(f"Generated key with kid={kid}, exp={exp_time}")  
     return kid
-
 
 @app.route('/jwks')
 def jwks():
-    """Provides the public keys that are still valid (not expired)"""
+    """Provides the public keys that are still valid (not expired)."""
+    # If no keys, create new one
+    if not keys:
+        generate_key()
+    
+    print("Current keys:", keys)
+
     valid_keys = {
         "keys": [
             {
@@ -56,38 +65,39 @@ def jwks():
 
 @app.route('/auth', methods=['POST'])
 def auth():
-    """Issues a real JWT for valid requests; supports issuing with expired keys via a query parameter"""
+    """Issues a JWT for valid requests; supports issuing with expired keys via query parameter."""
     expired = request.args.get('expired', 'false') == 'true'
     
-    # Handling case for no expired keys
+    # Handling case where an expired JWT is requested
     if expired:
         expired_keys = [k for k in keys if k["exp"] < time.time()]
         if not expired_keys:
-            return jsonify({"error": "No expired keys available"}), 400  #get 400 if no expired keys exist
+            return jsonify({"error": "No expired keys available"}), 400 
         key_info = expired_keys[-1]
     else:
+        
         valid_keys = [k for k in keys if k["exp"] > time.time()]
         if not valid_keys:
-            return jsonify({"error": "No valid keys available"}), 400  #get 400 if no valid keys exist
+            return jsonify({"error": "No valid keys available"}), 400 
         key_info = valid_keys[0]
     
-    # JWT token
+    # Create JWT token
     token = jwt.encode(
         {
-            "iss": "jwks_server",
-            "sub": "user@example.com",
-            "aud": "http://example.com",
-            "exp": datetime.utcnow() + timedelta(minutes=5 if not expired else -5)
+            "iss": "jwks_server",  
+            "sub": "user@example.com",  
+            "aud": "http://example.com",  
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=5 if not expired else -5)  #expiration
         },
-        key_info['private_key'],
-        algorithm="RS256",
-        headers={"kid": key_info["kid"]}
+        key_info['private_key'],  
+        algorithm="RS256",  
+        headers={"kid": key_info["kid"]}  # Including the key ID (kid) in  JWT header
     )
 
-    # get token
+    # Returning JWT token
     return jsonify({"token": token})
 
 if __name__ == '__main__':
     print("Starting Flask app...")
-    generate_key()  # initial key
-    app.run(port=8080, debug=True)  # Flask app
+    generate_key()  
+    app.run(port=8080, debug=True)  # Starting the Flask server
