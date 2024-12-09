@@ -18,7 +18,13 @@ This repository contains a JWKS server built with Flask and SQLite for managing 
 
 
   Endpoints
-1. GET /jwks
+
+*Register a new user: curl -X POST http://127.0.0.1:8080/register -H "Content-Type: application/json" -d '{"username": "test_user", "email": "test@example.com"}'
+
+*AUTHENTICATE: curl -X POST http://127.0.0.1:8080/auth
+
+
+ GET /jwks
 
 Example for valid key:
 curl http://127.0.0.1:8080/jwks
